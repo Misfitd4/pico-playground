@@ -10,6 +10,7 @@ if (TARGET pico_scanvideo) # not all build types support it
     add_subdirectory_exclude_platforms(mandelbrot)
     add_subdirectory_exclude_platforms(mario_tiles)
     add_subdirectory_exclude_platforms(scanvideo_minimal)
+    add_subdirectory_exclude_platforms(siddler_pico)
     add_subdirectory_exclude_platforms(sprite_demo "rp2350-riscv")
     add_subdirectory_exclude_platforms(test_pattern)
     add_subdirectory_exclude_platforms(textmode)
