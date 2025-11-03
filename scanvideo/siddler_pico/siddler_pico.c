@@ -329,6 +329,34 @@ static inline int parse_hex_byte(char hi, char lo) {
 	return (h << 4) | l;
 }
 
+static uint16_t sample_plasma_color(int x, int y, uint32_t frame) {
+	float t = (float) frame * 0.035f;
+	float fx = (float) x * 0.045f;
+	float fy = (float) y * 0.035f;
+	float fr = sqrtf((float) (x * x + y * y)) * 0.012f;
+	float mix = sinf(fx + t)
+	            + sinf(fy - t * 1.3f)
+	            + sinf(fr + t * 0.8f)
+	            + sinf(((float) (x + y)) * 0.02f - t * 0.6f);
+	mix *= 0.25f; // -1..1
+
+	float phase = mix * 3.2f;
+	float r = sinf(phase + t) * 0.5f + 0.5f;
+	float g = sinf(phase + t + 2.0f) * 0.5f + 0.5f;
+	float b = sinf(phase + t + 4.0f) * 0.5f + 0.5f;
+
+	const float base = 0.05f;
+	const float scale = 0.35f;
+
+	r = fminf(1.0f, fmaxf(0.0f, base + r * scale));
+	g = fminf(1.0f, fmaxf(0.0f, base + g * scale));
+	b = fminf(1.0f, fmaxf(0.0f, base + b * scale));
+
+	return rgb_from_u8((uint8_t) (r * 255.0f),
+	                   (uint8_t) (g * 255.0f),
+	                   (uint8_t) (b * 255.0f));
+}
+
 static uint16_t sid_address_color(uint8_t addr) {
 	if (addr <= 0x06u) {
 		return rgb_from_u8(255, 140, 120);
@@ -908,7 +936,6 @@ static void __time_critical_func(render_scanline)(struct scanvideo_scanline_buff
 
 	uint16_t *pixels = raw_scanline_prepare(dest, VGA_MODE.width);
 	uint32_t frame = frame_counter;
-	uint16_t bg_color = compute_line_color(scanline, frame, &local_state);
 
 	uint16_t char_colors[TEXT_COLS];
 	for (int c = 0; c < TEXT_COLS; ++c) {
@@ -983,7 +1010,7 @@ static void __time_critical_func(render_scanline)(struct scanvideo_scanline_buff
 
 	if (!row_valid) {
 		for (int x = 0; x < VGA_MODE.width; ++x) {
-			pixels[x] = bg_color;
+			pixels[x] = sample_plasma_color(x, scanline, frame);
 		}
 		raw_scanline_finish(dest);
 		return;
@@ -991,7 +1018,7 @@ static void __time_critical_func(render_scanline)(struct scanvideo_scanline_buff
 
 	for (int x = 0; x < VGA_MODE.width; ++x) {
 		int col = x / CHAR_WIDTH;
-		uint16_t color = bg_color;
+		uint16_t color = sample_plasma_color(x, scanline, frame);
 		if (col < TEXT_COLS) {
 			uint8_t ch = (uint8_t) row_chars[col];
 			uint8_t glyph = font8x8_basic[ch & 0x7fu][glyph_row & 7];
