@@ -349,18 +349,23 @@ static void update_cdc_status_line(const char *cdc_state) {
 }
 
 static void format_event_entry(char *dst, size_t dst_len, event_log_entry_t const *entry) {
-	uint8_t mask = entry->chip_mask & 0x03u;
-	const char *chip_str = (mask == 0x01) ? "C0" : (mask == 0x02) ? "C1" : (mask == 0x03) ? "C*" : "--";
-	snprintf(dst, dst_len, "%s$%02X=#$%02X d%03u",
-	         chip_str,
+	unsigned delta = (unsigned) entry->delta;
+	/* Fixed-width delta: D followed by two hex digits, or DFF+ if over 0xFF */
+	if (delta > 0xFFu) {
+		snprintf(dst, dst_len, "DFF+$%02X=#$%02X",
+		         entry->addr & 0x1Fu,
+		         entry->value);
+		return;
+	}
+	snprintf(dst, dst_len, "D%02X $%02X=#$%02X",
+	         delta,
 	         entry->addr & 0x1Fu,
-	         entry->value,
-	         (unsigned) entry->delta);
+	         entry->value);
 }
 
 static void update_event_trace_display(uint32_t sid_frame_index, uint32_t video_frame_index) {
-	const unsigned cols = 3;
-	const unsigned col_width = 13;
+const unsigned cols = 3;
+const unsigned col_width = 13;
 	size_t row = EVENT_ROW_START;
 	if (!last_event_log_ready) {
 		set_status_line((int) row++, "Waiting for SID data...");
@@ -747,7 +752,9 @@ static void process_serial_stream(void) {
 			siddler_audio_task();
 		}
 		uint8_t chip_mask = event.chip & 0x03u;
-		uint16_t delta16 = (event.delta > 0xFFFFu) ? 0xFFFFu : (uint16_t) event.delta;
+		uint16_t delta16 = (frame_event_log_count == 0)
+				? 0u
+				: ((event.delta > 0xFFFFu) ? 0xFFFFu : (uint16_t) event.delta);
 		if (frame_event_log_count < EVENT_LOG_MAX) {
 			frame_event_log[frame_event_log_count++] = (event_log_entry_t) {
 				.chip_mask = chip_mask,
@@ -794,7 +801,7 @@ static void __time_critical_func(frame_update_logic)(void) {
 		visual_state.hue++;
 	}
 	critical_section_exit(&sid_state_lock);
-	set_status_line(5, "FRAME %08lu 50Hz|Bleepz&Blopz soon", (unsigned long) frame_counter);
+    set_status_line(5, "FRAME %08lu 50Hz|NoMore KRRZPRRTs", (unsigned long) frame_counter);
 	if ((frame_counter - last_sid_frame_index) > 300u && (frame_counter & 0x3Fu) == 0u) {
 		set_status_line(1, "WAITING FOR SID DATA");
 	}
@@ -927,12 +934,12 @@ int main(void) {
 	gpio_put(PICO_DEFAULT_LED_PIN, led_state);
 	clear_status_lines();
 	audio_ready = siddler_audio_init();
-	set_status_line(0, "Oddvolt's SIDDLER PICO ALPHA9");
+    set_status_line(0, "Oddvolt's SIDDLER PICO ALPHA10");
 	set_status_line(1, "WAITING FOR SID DATA");
 	set_status_line(2, "EVENTS --- AVG --- CHIP -");
 	update_cdc_status_line("CDC WAITING");
 	set_status_line(4, "BUFFER    0 CDC OFF");
-	set_status_line(5, "FRAME 00000000 50Hz|Bleepz&Blopz soon");
+    set_status_line(5, "FRAME 00000000 50Hz|NoMore KRRZPRRTs");
 	update_event_trace_display(0, 0);
 
 	scanvideo_setup(&VGA_MODE);
