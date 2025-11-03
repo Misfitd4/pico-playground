@@ -371,7 +371,7 @@ static void format_event_entry(char *dst, size_t dst_len, event_log_entry_t cons
 	unsigned delta = (unsigned) entry->delta;
 	/* Fixed-width delta: D followed by two hex digits, or DFF+ if over 0xFF */
 	if (delta > 0xFFu) {
-		snprintf(dst, dst_len, "DFF+ $%02X=#$%02X",
+		snprintf(dst, dst_len, "D++ $%02X=#$%02X",
 		         entry->addr & 0x1Fu,
 		         entry->value);
 		return;
