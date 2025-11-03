@@ -12,6 +12,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <math.h>
+#include <ctype.h>
 
 #include "hardware/clocks.h"
 
@@ -310,6 +311,24 @@ static inline uint16_t pack_rgb565(uint8_t r, uint8_t g, uint8_t b) {
     return (uint16_t) ((r << 11) | (g << 5) | b);
 }
 
+static inline uint16_t rgb_from_u8(uint8_t r8, uint8_t g8, uint8_t b8) {
+	return pack_rgb565(r8 >> 3, g8 >> 2, b8 >> 3);
+}
+
+static inline int hex_value(char c) {
+	if (c >= '0' && c <= '9') return c - '0';
+	if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+	if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+	return -1;
+}
+
+static inline int parse_hex_byte(char hi, char lo) {
+	int h = hex_value(hi);
+	int l = hex_value(lo);
+	if (h < 0 || l < 0) return -1;
+	return (h << 4) | l;
+}
+
 static inline int32_t abs_i32(int32_t v) {
 	return (v < 0) ? -v : v;
 }
@@ -352,7 +371,7 @@ static void format_event_entry(char *dst, size_t dst_len, event_log_entry_t cons
 	unsigned delta = (unsigned) entry->delta;
 	/* Fixed-width delta: D followed by two hex digits, or DFF+ if over 0xFF */
 	if (delta > 0xFFu) {
-		snprintf(dst, dst_len, "DFF+$%02X=#$%02X",
+		snprintf(dst, dst_len, "DFF+ $%02X=#$%02X",
 		         entry->addr & 0x1Fu,
 		         entry->value);
 		return;
@@ -858,6 +877,79 @@ static void __time_critical_func(render_scanline)(struct scanvideo_scanline_buff
 	uint32_t frame = frame_counter;
 	uint16_t bg_color = compute_line_color(scanline, frame, &local_state);
 
+	uint16_t char_colors[TEXT_COLS];
+	for (int c = 0; c < TEXT_COLS; ++c) {
+		char_colors[c] = 0xffffu;
+	}
+
+	if (row_valid) {
+		if (text_row == 0) {
+			uint16_t title_color = rgb_from_u8(255, 210, 80);
+			for (int c = 0; c < TEXT_COLS; ++c) char_colors[c] = title_color;
+		} else if (text_row == 1 || text_row == 2) {
+			uint16_t status_color = rgb_from_u8(190, 230, 255);
+			for (int c = 0; c < TEXT_COLS; ++c) char_colors[c] = status_color;
+		} else if (text_row == 3) {
+			uint16_t cdc_color = rgb_from_u8(190, 255, 210);
+			for (int c = 0; c < TEXT_COLS; ++c) char_colors[c] = cdc_color;
+		} else if (text_row == 4) {
+			uint16_t buffer_color = rgb_from_u8(255, 225, 200);
+			for (int c = 0; c < TEXT_COLS; ++c) char_colors[c] = buffer_color;
+		} else if (text_row == 5) {
+			uint16_t frame_color = rgb_from_u8(240, 200, 255);
+			for (int c = 0; c < TEXT_COLS; ++c) char_colors[c] = frame_color;
+		}
+
+		if (text_row >= EVENT_ROW_START && row_chars[0] == 'D') {
+			uint16_t dark_gray = rgb_from_u8(100, 100, 100);
+			uint16_t address_color = rgb_from_u8(255, 240, 80);
+			int idx = 0;
+			while (idx < TEXT_COLS) {
+				char ch = row_chars[idx];
+				if (ch == ' ') break;
+				char_colors[idx] = dark_gray;
+				idx++;
+			}
+			while (idx < TEXT_COLS && row_chars[idx] == ' ') idx++;
+			if (idx < TEXT_COLS && row_chars[idx] == '$') {
+				char_colors[idx] = dark_gray;
+				idx++;
+				for (int j = 0; j < 2 && idx < TEXT_COLS; ++j, ++idx) {
+					if (isxdigit((unsigned char) row_chars[idx])) char_colors[idx] = address_color;
+				}
+			}
+			if (idx < TEXT_COLS && row_chars[idx] == '=') {
+				char_colors[idx] = dark_gray;
+				idx++;
+			}
+			if (idx < TEXT_COLS && row_chars[idx] == '#') {
+				char_colors[idx] = dark_gray;
+				idx++;
+			}
+			if (idx < TEXT_COLS && row_chars[idx] == '$') {
+				char_colors[idx] = dark_gray;
+				idx++;
+			}
+			if (idx + 1 < TEXT_COLS && isxdigit((unsigned char) row_chars[idx]) && isxdigit((unsigned char) row_chars[idx + 1])) {
+				int value = parse_hex_byte(row_chars[idx], row_chars[idx + 1]);
+				if (value >= 0) {
+					uint8_t v = (uint8_t) value;
+					uint8_t r8 = v;
+					int diff = v - 128;
+					if (diff < 0) diff = -diff;
+					int g = 255 - diff * 2;
+					if (g < 0) g = 0;
+					uint8_t g8 = (uint8_t) g;
+					uint8_t b8 = (uint8_t) (255 - v);
+					uint16_t value_color = rgb_from_u8(r8, g8, b8);
+					char_colors[idx] = value_color;
+					char_colors[idx + 1] = value_color;
+				}
+				idx += 2;
+			}
+		}
+	}
+
 	if (!row_valid) {
 		for (int x = 0; x < VGA_MODE.width; ++x) {
 			pixels[x] = bg_color;
@@ -874,7 +966,7 @@ static void __time_critical_func(render_scanline)(struct scanvideo_scanline_buff
 			uint8_t glyph = font8x8_basic[ch & 0x7fu][glyph_row & 7];
 			bool on = (glyph & (1u << (CHAR_WIDTH - 1 - (x % CHAR_WIDTH)))) != 0;
 			if (on) {
-				color = 0xffffu;
+				color = char_colors[col];
 			}
 		}
 		pixels[x] = color;
