@@ -329,39 +329,6 @@ static inline int parse_hex_byte(char hi, char lo) {
 	return (h << 4) | l;
 }
 
-static uint16_t sid_address_color(uint8_t addr) {
-	if (addr <= 0x06u) {
-		return rgb_from_u8(255, 140, 120);
-	} else if (addr <= 0x0Du) {
-		return rgb_from_u8(140, 255, 160);
-	} else if (addr <= 0x14u) {
-		return rgb_from_u8(150, 180, 255);
-	} else if (addr <= 0x16u) {
-		return rgb_from_u8(255, 200, 140);
-	} else if (addr == 0x17u) {
-		return rgb_from_u8(255, 160, 210);
-	} else if (addr == 0x18u) {
-		return rgb_from_u8(220, 220, 220);
-	} else if (addr <= 0x1Au) {
-		return rgb_from_u8(160, 255, 255);
-	} else if (addr <= 0x1Cu) {
-		return rgb_from_u8(220, 160, 255);
-	}
-	return rgb_from_u8(200, 200, 200);
-}
-
-static uint16_t sid_value_color(uint8_t v) {
-	float t = v / 255.0f;
-	float r = t;
-	float b = 1.0f - t;
-	float g = 1.0f - fabsf(t - 0.5f) * 2.0f;
-	if (g < 0.0f) g = 0.0f;
-	uint8_t r8 = (uint8_t) (r * 255.0f);
-	uint8_t g8 = (uint8_t) (g * 255.0f);
-	uint8_t b8 = (uint8_t) (b * 255.0f);
-	return rgb_from_u8(r8, g8, b8);
-}
-
 static inline int32_t abs_i32(int32_t v) {
 	return (v < 0) ? -v : v;
 }
@@ -416,8 +383,8 @@ static void format_event_entry(char *dst, size_t dst_len, event_log_entry_t cons
 }
 
 static void update_event_trace_display(uint32_t sid_frame_index, uint32_t video_frame_index) {
-const unsigned cols = 3;
-const unsigned col_width = 13;
+	const unsigned cols = 3;
+	const unsigned col_width = 18;
 	size_t row = EVENT_ROW_START;
 	if (!last_event_log_ready) {
 		set_status_line((int) row++, "Waiting for SID data...");
@@ -885,11 +852,6 @@ static uint16_t __time_critical_func(compute_line_color)(int scanline, uint32_t 
 		blue = (uint8_t) (0x1Fu - blue);
 	}
 
-	/* Dim overall intensity so text stays legible */
-	r = (uint8_t) ((r * 3u) >> 2);
-	g = (uint8_t) ((g * 3u) >> 2);
-	blue = (uint8_t) ((blue * 3u) >> 2);
-
 	return pack_rgb565(r, g, blue);
 }
 
@@ -940,7 +902,7 @@ static void __time_critical_func(render_scanline)(struct scanvideo_scanline_buff
 
 		if (text_row >= EVENT_ROW_START && row_chars[0] == 'D') {
 			uint16_t dark_gray = rgb_from_u8(100, 100, 100);
-			uint16_t default_address_color = rgb_from_u8(255, 240, 80);
+			uint16_t address_color = rgb_from_u8(255, 240, 80);
 			int idx = 0;
 			while (idx < TEXT_COLS) {
 				char ch = row_chars[idx];
@@ -952,14 +914,8 @@ static void __time_critical_func(render_scanline)(struct scanvideo_scanline_buff
 			if (idx < TEXT_COLS && row_chars[idx] == '$') {
 				char_colors[idx] = dark_gray;
 				idx++;
-				if (idx + 1 < TEXT_COLS) {
-					int addr_val = parse_hex_byte(row_chars[idx], row_chars[idx + 1]);
-					uint16_t addr_color = (addr_val >= 0)
-					                      ? sid_address_color((uint8_t) addr_val)
-					                      : default_address_color;
-					char_colors[idx] = addr_color;
-					char_colors[idx + 1] = addr_color;
-					idx += 2;
+				for (int j = 0; j < 2 && idx < TEXT_COLS; ++j, ++idx) {
+					if (isxdigit((unsigned char) row_chars[idx])) char_colors[idx] = address_color;
 				}
 			}
 			if (idx < TEXT_COLS && row_chars[idx] == '=') {
@@ -976,20 +932,36 @@ static void __time_critical_func(render_scanline)(struct scanvideo_scanline_buff
 			}
 			if (idx + 1 < TEXT_COLS && isxdigit((unsigned char) row_chars[idx]) && isxdigit((unsigned char) row_chars[idx + 1])) {
 				int value = parse_hex_byte(row_chars[idx], row_chars[idx + 1]);
-				uint16_t value_color = (value >= 0)
-				                       ? sid_value_color((uint8_t) value)
-				                       : rgb_from_u8(220, 220, 220);
-				char_colors[idx] = value_color;
-				char_colors[idx + 1] = value_color;
+				if (value >= 0) {
+					uint8_t v = (uint8_t) value;
+					uint8_t r8 = v;
+					int diff = v - 128;
+					if (diff < 0) diff = -diff;
+					int g = 255 - diff * 2;
+					if (g < 0) g = 0;
+					uint8_t g8 = (uint8_t) g;
+					uint8_t b8 = (uint8_t) (255 - v);
+					uint16_t value_color = rgb_from_u8(r8, g8, b8);
+					char_colors[idx] = value_color;
+					char_colors[idx + 1] = value_color;
+				}
 				idx += 2;
 			}
 		}
 	}
 
+	if (!row_valid) {
+		for (int x = 0; x < VGA_MODE.width; ++x) {
+			pixels[x] = bg_color;
+		}
+		raw_scanline_finish(dest);
+		return;
+	}
+
 	for (int x = 0; x < VGA_MODE.width; ++x) {
 		int col = x / CHAR_WIDTH;
 		uint16_t color = bg_color;
-		if (row_valid && col < TEXT_COLS) {
+		if (col < TEXT_COLS) {
 			uint8_t ch = (uint8_t) row_chars[col];
 			uint8_t glyph = font8x8_basic[ch & 0x7fu][glyph_row & 7];
 			bool on = (glyph & (1u << (CHAR_WIDTH - 1 - (x % CHAR_WIDTH)))) != 0;
