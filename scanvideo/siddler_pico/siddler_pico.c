@@ -329,6 +329,39 @@ static inline int parse_hex_byte(char hi, char lo) {
 	return (h << 4) | l;
 }
 
+static uint16_t sid_voice_color(uint8_t addr) {
+	if (addr <= 0x06u) {
+		return rgb_from_u8(255, 140, 120);
+	} else if (addr <= 0x0Du) {
+		return rgb_from_u8(140, 255, 160);
+	} else if (addr <= 0x14u) {
+		return rgb_from_u8(150, 180, 255);
+	} else if (addr <= 0x16u) {
+		return rgb_from_u8(255, 200, 140);
+	} else if (addr == 0x17u) {
+		return rgb_from_u8(255, 160, 210);
+	} else if (addr == 0x18u) {
+		return rgb_from_u8(220, 220, 220);
+	} else if (addr <= 0x1Au) {
+		return rgb_from_u8(160, 255, 255);
+	} else if (addr <= 0x1Cu) {
+		return rgb_from_u8(220, 160, 255);
+	}
+	return rgb_from_u8(200, 200, 200);
+}
+
+static uint16_t sid_value_color(uint8_t v) {
+	float t = v / 255.0f;
+	float r = t;
+	float b = 1.0f - t;
+	float g = 1.0f - fabsf(t - 0.5f) * 2.0f;
+	if (g < 0.0f) g = 0.0f;
+	return rgb_from_u8((uint8_t) (r * 255.0f),
+	                   (uint8_t) (g * 255.0f),
+	                   (uint8_t) (b * 255.0f));
+}
+
+
 static inline int32_t abs_i32(int32_t v) {
 	return (v < 0) ? -v : v;
 }
@@ -899,54 +932,48 @@ static void __time_critical_func(render_scanline)(struct scanvideo_scanline_buff
 			uint16_t frame_color = rgb_from_u8(240, 200, 255);
 			for (int c = 0; c < TEXT_COLS; ++c) char_colors[c] = frame_color;
 		}
+	}
 
-		if (text_row >= EVENT_ROW_START && row_chars[0] == 'D') {
-			uint16_t dark_gray = rgb_from_u8(100, 100, 100);
-			uint16_t address_color = rgb_from_u8(255, 240, 80);
-			int idx = 0;
-			while (idx < TEXT_COLS) {
-				char ch = row_chars[idx];
-				if (ch == ' ') break;
-				char_colors[idx] = dark_gray;
-				idx++;
+	if (text_row >= EVENT_ROW_START && last_event_log_ready) {
+		const unsigned EVENT_COLS = 3;
+		const unsigned EVENT_COL_WIDTH = 18;
+		uint16_t dark_gray = rgb_from_u8(120, 120, 120);
+		uint16_t default_address_color = rgb_from_u8(255, 240, 80);
+		int event_row = text_row - EVENT_ROW_START;
+		for (unsigned ev_col = 0; ev_col < EVENT_COLS; ++ev_col) {
+			unsigned event_index = event_row * EVENT_COLS + ev_col;
+			if (event_index >= last_event_log_count) break;
+			event_log_entry_t const *ev = &last_event_log[event_index];
+			unsigned start = ev_col * EVENT_COL_WIDTH;
+			if (start >= TEXT_COLS) continue;
+			uint32_t delta = ev->delta;
+			if (delta > 18000u) delta = 18000u;
+			uint8_t shade = (uint8_t) (255u - (delta * 255u) / 18000u);
+			uint16_t delta_color = rgb_from_u8(shade, shade, shade);
+
+			for (int pos = 0; pos < 3; ++pos) {
+				if (start + pos < TEXT_COLS) char_colors[start + pos] = delta_color;
 			}
-			while (idx < TEXT_COLS && row_chars[idx] == ' ') idx++;
-			if (idx < TEXT_COLS && row_chars[idx] == '$') {
-				char_colors[idx] = dark_gray;
-				idx++;
-				for (int j = 0; j < 2 && idx < TEXT_COLS; ++j, ++idx) {
-					if (isxdigit((unsigned char) row_chars[idx])) char_colors[idx] = address_color;
-				}
+			if (start + 3 < TEXT_COLS) char_colors[start + 3] = 0xffffu; /* space */
+
+			if (start + 4 < TEXT_COLS) char_colors[start + 4] = dark_gray; /* $ */
+			if (start + 5 < TEXT_COLS) {
+				uint8_t addr = ev->addr & 0x1Fu;
+				uint16_t addr_color = sid_voice_color(addr);
+				char_colors[start + 5] = addr_color;
 			}
-			if (idx < TEXT_COLS && row_chars[idx] == '=') {
-				char_colors[idx] = dark_gray;
-				idx++;
+			if (start + 6 < TEXT_COLS) {
+				uint8_t addr = ev->addr & 0x1Fu;
+				uint16_t addr_color = sid_voice_color(addr);
+				char_colors[start + 6] = addr_color;
 			}
-			if (idx < TEXT_COLS && row_chars[idx] == '#') {
-				char_colors[idx] = dark_gray;
-				idx++;
-			}
-			if (idx < TEXT_COLS && row_chars[idx] == '$') {
-				char_colors[idx] = dark_gray;
-				idx++;
-			}
-			if (idx + 1 < TEXT_COLS && isxdigit((unsigned char) row_chars[idx]) && isxdigit((unsigned char) row_chars[idx + 1])) {
-				int value = parse_hex_byte(row_chars[idx], row_chars[idx + 1]);
-				if (value >= 0) {
-					uint8_t v = (uint8_t) value;
-					uint8_t r8 = v;
-					int diff = v - 128;
-					if (diff < 0) diff = -diff;
-					int g = 255 - diff * 2;
-					if (g < 0) g = 0;
-					uint8_t g8 = (uint8_t) g;
-					uint8_t b8 = (uint8_t) (255 - v);
-					uint16_t value_color = rgb_from_u8(r8, g8, b8);
-					char_colors[idx] = value_color;
-					char_colors[idx + 1] = value_color;
-				}
-				idx += 2;
-			}
+			if (start + 7 < TEXT_COLS) char_colors[start + 7] = dark_gray; /* '=' */
+			if (start + 8 < TEXT_COLS) char_colors[start + 8] = dark_gray; /* '#' */
+			if (start + 9 < TEXT_COLS) char_colors[start + 9] = dark_gray; /* '$' */
+
+			uint16_t value_color = sid_value_color(ev->value);
+			if (start + 10 < TEXT_COLS) char_colors[start + 10] = value_color;
+			if (start + 11 < TEXT_COLS) char_colors[start + 11] = value_color;
 		}
 	}
 
