@@ -381,6 +381,42 @@ bool sid_engine_is_6581(void) {
     return g_channel_model[0] == MOS6581 && g_channel_model[1] == MOS6581;
 }
 
+void sid_engine_get_monitor(sid_engine_monitor_t *out) {
+    if (!out) {
+        return;
+    }
+
+    for (int i = 0; i < 3; ++i) {
+        out->voice_freq[i] = 0;
+        out->voice_control[i] = 0;
+        out->voice_envelope[i] = 0;
+    }
+    out->filter_cutoff = 0;
+    out->filter_resonance = 0;
+    out->filter_mode = 0;
+
+    SID16 *sid = g_sids[0];
+    if (!sid) {
+        return;
+    }
+
+    SID16::State state = sid->read_state();
+    for (int voice = 0; voice < 3; ++voice) {
+        uint8_t base = static_cast<uint8_t>(voice * 7);
+        uint16_t freq = (static_cast<uint16_t>(state.sid_register[base + 1]) << 8) |
+                        static_cast<uint16_t>(state.sid_register[base + 0]);
+        out->voice_freq[voice] = freq;
+        out->voice_control[voice] = state.sid_register[base + 4];
+        out->voice_envelope[voice] = state.envelope_counter[voice];
+    }
+
+    uint16_t cutoff = (static_cast<uint16_t>(state.sid_register[0x16] & 0x7Fu) << 3) |
+                      static_cast<uint16_t>(state.sid_register[0x15] & 0x07u);
+    out->filter_cutoff = cutoff;
+    out->filter_resonance = (state.sid_register[0x17] >> 4) & 0x0Fu;
+    out->filter_mode = state.sid_register[0x17] & 0x0Fu;
+}
+
 uint32_t sid_engine_get_queue_depth(void) {
     size_t head = g_event_head;
     size_t tail = g_event_tail;
