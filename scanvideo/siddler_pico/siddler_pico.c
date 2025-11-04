@@ -27,6 +27,7 @@
 #include "tusb.h"
 
 #include "siddler_audio.h"
+#include "sid_engine.h"
 
 #define SIDDLER_PIXEL_CLOCK_HZ 24000000u
 #define SIDDLER_SYS_CLOCK_KHZ 240000u
@@ -603,13 +604,16 @@ static void complete_sid_frame(uint32_t frame_index) {
 	uint32_t avg_cdc_rate = sid_stats.parse_time_total
 	                            ? (uint32_t) ((sid_stats.cdc_bytes_total * 1000ull) / sid_stats.parse_time_total)
 	                            : 0;
+	uint32_t queue_depth = sid_engine_get_queue_depth();
+	uint32_t drop_count = sid_engine_get_dropped_event_count();
 	current_frame_bytes = 0;
 
 	led_state = !led_state;
 	gpio_put(PICO_DEFAULT_LED_PIN, led_state);
 
 	set_status_line(1, "FRAME %08lu", (unsigned long) frame_index);
-	set_status_line(2, "EVENTS %3u AVG %3u CHIP %-2u", events, avg_events, last_chip & 0x03u);
+	set_status_line(2, "EVENTS %3u AVG %3u CHIP %-2u Q%4u D%u",
+	                events, avg_events, last_chip & 0x03u, queue_depth, drop_count);
 	set_status_line(4, "BUFFER %4zu CDC %s", buffer_fill, connected_state ? "ON" : "OFF");
 	set_status_line(LOG_ROW_START + 0, "Frames %10llu | Ev L%3u A%3u M%3u",
 	               (unsigned long long) frame_count, sid_stats.last_events, avg_events, sid_stats.max_events);
@@ -1053,7 +1057,7 @@ int main(void) {
 	gpio_put(PICO_DEFAULT_LED_PIN, led_state);
 	clear_status_lines();
 	audio_ready = siddler_audio_init();
-    set_status_line(0, "Oddvolt's SIDDLER PICO ALPHA10");
+	set_status_line(0, "SIDDLER PICO BETA1 - we got bllllzzzzbbllrrblorrblipp!!!");
 	set_status_line(1, "WAITING FOR SID DATA");
 	set_status_line(2, "EVENTS --- AVG --- CHIP -");
 	update_cdc_status_line("CDC WAITING");

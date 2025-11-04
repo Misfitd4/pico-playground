@@ -70,8 +70,8 @@ if (TARGET pico_scanvideo_dpi AND TARGET tinyusb_device AND TARGET pico_audio_i2
 
     target_compile_definitions(siddler_pico PRIVATE
             CFG_TUSB_MCU=OPT_MCU_RP2040
-            PICO_AUDIO_I2S_PIO=1
             PICO_AUDIO_I2S_DMA_IRQ=1
+            PICO_AUDIO_I2S_PIO=1
     )
 
     pico_enable_stdio_usb(siddler_pico 0)

@@ -12,7 +12,23 @@
 #endif
 
 #ifndef SIDDLER_AUDIO_BUFFER_SAMPLES
-#define SIDDLER_AUDIO_BUFFER_SAMPLES 256u
+#define SIDDLER_AUDIO_BUFFER_SAMPLES 96u
+#endif
+
+#ifndef SIDDLER_AUDIO_DMA_CHANNEL
+#define SIDDLER_AUDIO_DMA_CHANNEL 6u
+#endif
+
+#ifndef SIDDLER_AUDIO_PIO_SM
+#if PICO_AUDIO_I2S_PIO == 0
+#define SIDDLER_AUDIO_PIO_SM 2u
+#else
+#define SIDDLER_AUDIO_PIO_SM 0u
+#endif
+#endif
+
+#ifndef SIDDLER_AUDIO_TEST_TONE
+#define SIDDLER_AUDIO_TEST_TONE 0
 #endif
 
 static audio_format_t siddler_audio_format = {
@@ -34,7 +50,16 @@ static void siddler_audio_fill_buffer(struct audio_buffer *buffer) {
 	for (uint i = 0; i < buffer->max_sample_count; ++i) {
 		int16_t left = 0;
 		int16_t right = 0;
+#if SIDDLER_AUDIO_TEST_TONE
+		static uint32_t phase = 0;
+		const uint32_t step = (uint32_t) ((uint64_t)SIDDLER_AUDIO_SAMPLE_RATE * (1u << 16) / 440u);
+		phase += step;
+		int16_t sample = (int16_t) (phase >> 16) - 32768;
+		left = sample;
+		right = sample;
+#else
 		sid_engine_render_frame(&left, &right);
+#endif
 		samples[(i << 1) + 0] = left;
 		samples[(i << 1) + 1] = right;
 	}
@@ -61,7 +86,7 @@ bool siddler_audio_init(void) {
 	}
 
 	if (!siddler_audio_pool) {
-		siddler_audio_pool = audio_new_producer_pool(&siddler_producer_format, 3, SIDDLER_AUDIO_BUFFER_SAMPLES);
+		siddler_audio_pool = audio_new_producer_pool(&siddler_producer_format, 8, SIDDLER_AUDIO_BUFFER_SAMPLES);
 		if (!siddler_audio_pool) {
 			return false;
 		}
@@ -70,8 +95,8 @@ bool siddler_audio_init(void) {
 	struct audio_i2s_config config = {
 		.data_pin = PICO_AUDIO_I2S_DATA_PIN,
 		.clock_pin_base = PICO_AUDIO_I2S_CLOCK_PIN_BASE,
-		.dma_channel = 6,
-		.pio_sm = 0,
+		.dma_channel = SIDDLER_AUDIO_DMA_CHANNEL,
+		.pio_sm = SIDDLER_AUDIO_PIO_SM,
 	};
 
 	const struct audio_format *output_format = audio_i2s_setup(&siddler_audio_format, &config);
@@ -79,7 +104,7 @@ bool siddler_audio_init(void) {
 		return false;
 	}
 
-	if (!audio_i2s_connect(siddler_audio_pool)) {
+	if (!audio_i2s_connect_extra(siddler_audio_pool, false, 2, 96, NULL)) {
 		audio_i2s_set_enabled(false);
 		return false;
 	}
@@ -87,6 +112,7 @@ bool siddler_audio_init(void) {
 	audio_i2s_set_enabled(true);
 	siddler_audio_enabled = true;
 
+	sid_engine_reset_queue_state();
 	sid_engine_init(siddler_audio_format.sample_freq);
 	sid_engine_set_channel_models(true, true);
 
@@ -105,6 +131,7 @@ void siddler_audio_reset_state(void) {
 	if (!siddler_audio_enabled) {
 		return;
 	}
+	sid_engine_reset_queue_state();
 	sid_engine_init(siddler_audio_format.sample_freq);
 }
 

@@ -16,6 +16,9 @@ void sid_engine_queue_event(uint8_t chip, uint8_t addr, uint8_t value, uint32_t 
 void sid_engine_set_channel_models(bool left_6581, bool right_6581);
 void sid_engine_set_model(bool use_6581);
 bool sid_engine_is_6581(void);
+uint32_t sid_engine_get_queue_depth(void);
+uint32_t sid_engine_get_dropped_event_count(void);
+void sid_engine_reset_queue_state(void);
 
 #ifdef __cplusplus
 }

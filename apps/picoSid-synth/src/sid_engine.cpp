@@ -60,6 +60,7 @@ TimedEvent g_event_queue[kEventQueueSize];
 size_t g_event_head = 0;
 size_t g_event_tail = 0;
 uint32_t g_cycles_to_next_event = UINT32_MAX;
+uint32_t g_event_drop_count = 0;
 
 inline size_t advance_index(size_t idx) { return (idx + 1) % kEventQueueSize; }
 inline bool event_queue_empty() { return g_event_head == g_event_tail; }
@@ -68,6 +69,7 @@ void drop_oldest_event() {
     if (event_queue_empty()) return;
     TimedEvent dropped = g_event_queue[g_event_head];
     size_t next = advance_index(g_event_head);
+    g_event_drop_count++;
     if (next != g_event_tail) {
         g_event_queue[next].delta += dropped.delta;
         g_event_head = next;
@@ -377,4 +379,25 @@ void sid_engine_set_model(bool use_6581) {
 
 bool sid_engine_is_6581(void) {
     return g_channel_model[0] == MOS6581 && g_channel_model[1] == MOS6581;
+}
+
+uint32_t sid_engine_get_queue_depth(void) {
+    size_t head = g_event_head;
+    size_t tail = g_event_tail;
+    if (tail >= head) {
+        return static_cast<uint32_t>(tail - head);
+    }
+    return static_cast<uint32_t>(kEventQueueSize - head + tail);
+}
+
+uint32_t sid_engine_get_dropped_event_count(void) {
+    return g_event_drop_count;
+}
+
+void sid_engine_reset_queue_state(void) {
+    g_event_head = 0;
+    g_event_tail = 0;
+    g_cycles_to_next_event = UINT32_MAX;
+    g_event_drop_count = 0;
+    g_cycle_residual = 0.0;
 }
