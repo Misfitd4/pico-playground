@@ -45,6 +45,8 @@ if (TARGET pico_scanvideo_dpi AND TARGET tinyusb_device AND TARGET pico_audio_i2
         target_compile_features(siddler_sid_engine PUBLIC cxx_std_17)
     endif()
 
+    set(SIDDLER_REFRESH_HZ "60" CACHE STRING "Default refresh rate for siddler_pico output (50 or 60)")
+
     add_executable(siddler_pico
             siddler_pico.c
             usb_descriptors.c
@@ -72,10 +74,11 @@ if (TARGET pico_scanvideo_dpi AND TARGET tinyusb_device AND TARGET pico_audio_i2
             CFG_TUSB_MCU=OPT_MCU_RP2040
             PICO_AUDIO_I2S_DMA_IRQ=1
             PICO_AUDIO_I2S_PIO=1
+            SIDDLER_DEFAULT_REFRESH_HZ=${SIDDLER_REFRESH_HZ}
     )
 
-    pico_enable_stdio_usb(siddler_pico 0)
-    pico_enable_stdio_uart(siddler_pico 1)
+    pico_enable_stdio_usb(siddler_pico 1)
+    pico_enable_stdio_uart(siddler_pico 0)
 
     pico_add_extra_outputs(siddler_pico)
 endif ()

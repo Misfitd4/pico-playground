@@ -2,3 +2,7 @@
 .vscode
 cmake-*
 build
+build-*
+tools/vice-3.9/
+tools/.DS_Store
+.DS_Store

@@ -6,6 +6,12 @@ include(pico_sdk_import.cmake)
 # We also need PICO EXTRAS
 include(pico_extras_import.cmake)
 
+# Default to the VGABoard pinout so scanvideo builds emit a signal without
+# having to remember -DPICO_BOARD on every configure step.
+if (NOT DEFINED PICO_BOARD)
+    set(PICO_BOARD "vgaboard" CACHE STRING "Default target board" FORCE)
+endif()
+
 project(pico_playground C CXX)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)

@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -16,6 +17,23 @@ void sid_engine_queue_event(uint8_t chip, uint8_t addr, uint8_t value, uint32_t 
 void sid_engine_set_channel_models(bool left_6581, bool right_6581);
 void sid_engine_set_model(bool use_6581);
 bool sid_engine_is_6581(void);
+void sid_engine_set_split_channels(bool split);
+bool sid_engine_get_split_channels(void);
+void sid_engine_set_master_volume(float level);
+float sid_engine_get_master_volume(void);
+typedef struct {
+    uint8_t chip_mask;
+    uint8_t addr;
+    uint8_t value;
+    uint32_t delta;
+} sid_engine_queue_entry_t;
+
+typedef struct {
+    uint32_t depth;
+    uint32_t capacity;
+    uint32_t dropped;
+    uint32_t cycles_to_next;
+} sid_engine_queue_stats_t;
 typedef struct {
     uint16_t voice_freq[3];
     uint8_t voice_control[3];
@@ -29,6 +47,8 @@ void sid_engine_get_monitor(sid_engine_monitor_t *out);
 uint32_t sid_engine_get_queue_depth(void);
 uint32_t sid_engine_get_dropped_event_count(void);
 void sid_engine_reset_queue_state(void);
+size_t sid_engine_peek_queue(sid_engine_queue_entry_t *out, size_t max_entries, uint32_t *cycles_to_next);
+void sid_engine_get_queue_stats(sid_engine_queue_stats_t *stats);
 
 #ifdef __cplusplus
 }

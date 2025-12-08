@@ -58,7 +58,7 @@ static void siddler_audio_fill_buffer(struct audio_buffer *buffer) {
 		left = sample;
 		right = sample;
 #else
-		sid_engine_render_frame(&left, &right);
+        sid_engine_render_frame(&left, &right);  // Use sid_engine_set_master_volume() to tweak the master level.
 #endif
 		samples[(i << 1) + 0] = left;
 		samples[(i << 1) + 1] = right;

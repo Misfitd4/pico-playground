@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <climits>
 
+#include "hardware/sync.h"
+
 #include "reSID16/sid.h"
 #include "reSID16/siddefs.h"
 #include "reSID_LUT.h"
@@ -27,7 +29,9 @@ constexpr uint8_t kAttackDecay = 0x11;      // Attack 1, Decay 1
 constexpr uint8_t kReleaseRate = 0x04;      // Release rate
 constexpr uint8_t kDefaultSustain = 0x0f;   // Sustained level (max)
 constexpr uint8_t kWaveformSaw = 0x20;      // Sawtooth waveform bit
-constexpr float kOutputGain = 1.5f;
+// Default master output level (tweak via sid_engine_set_master_volume()).
+constexpr float kDefaultMasterVolume = 1.25f;
+static float g_master_volume = kDefaultMasterVolume;
 
 struct VoiceState {
     bool active;
@@ -47,6 +51,7 @@ chip_model g_channel_model[2] = {
     SID_LEFT_IS_6581 ? MOS6581 : MOS8580,
     SID_RIGHT_IS_6581 ? MOS6581 : MOS8580
 };
+bool g_split_channels = false;
 
 struct TimedEvent {
     uint8_t chip_mask;
@@ -65,6 +70,13 @@ uint32_t g_event_drop_count = 0;
 inline size_t advance_index(size_t idx) { return (idx + 1) % kEventQueueSize; }
 inline bool event_queue_empty() { return g_event_head == g_event_tail; }
 
+inline uint32_t queue_depth_unsafe() {
+    if (g_event_tail >= g_event_head) {
+        return static_cast<uint32_t>(g_event_tail - g_event_head);
+    }
+    return static_cast<uint32_t>(kEventQueueSize - g_event_head + g_event_tail);
+}
+
 void drop_oldest_event() {
     if (event_queue_empty()) return;
     TimedEvent dropped = g_event_queue[g_event_head];
@@ -82,7 +94,9 @@ void drop_oldest_event() {
 
 void apply_event(const TimedEvent &ev) {
     uint8_t mask = ev.chip_mask & 0x3u;
-    if (!mask) mask = 0x3u;  // default to both SIDs
+    if (!mask) {
+        return;
+    }
     if ((mask & 0x1u) && g_sids[0]) {
         g_sids[0]->write(ev.addr & 0x1fu, ev.value);
     }
@@ -332,10 +346,58 @@ void sid_engine_render_frame(int16_t *left, int16_t *right) {
         return static_cast<int16_t>(value);
     };
 
-    int32_t amplified_left = static_cast<int32_t>(samples[0] * kOutputGain);
-    int32_t amplified_right = static_cast<int32_t>(samples[1] * kOutputGain);
-    *left = clamp16(amplified_left);
-    *right = clamp16(amplified_right);
+    auto soft_clip = [](int32_t value) -> int32_t {
+        constexpr int32_t knee = 24576;  // about 75% of full scale
+        if (value > knee) {
+            int32_t excess = value - knee;
+            value = knee + (excess >> 1);
+            if (value > 32767) value = 32767;
+        } else if (value < -knee) {
+            int32_t excess = (-value) - knee;
+            value = -(knee + (excess >> 1));
+            if (value < -32768) value = -32768;
+        }
+        return value;
+    };
+
+    auto apply_gain = [](float value) -> int32_t {
+        return static_cast<int32_t>(value * g_master_volume);
+    };
+
+    const float sid_gain = (g_sids[0] && g_sids[1]) ? 0.5f : 1.0f;
+    float sid0 = samples[0] * sid_gain;
+    float sid1 = samples[1] * sid_gain;
+
+    float left_raw;
+    float right_raw;
+    if (g_split_channels && g_sids[1]) {
+        left_raw = 0.8f * sid0 + 0.2f * sid1;
+        right_raw = 0.2f * sid0 + 0.8f * sid1;
+    } else {
+        float mono = sid0 + sid1;
+        left_raw = mono;
+        right_raw = mono;
+    }
+
+    static float hp_prev_in_l = 0.0f, hp_prev_out_l = 0.0f;
+    static float hp_prev_in_r = 0.0f, hp_prev_out_r = 0.0f;
+    const float hp_coeff = 0.995f;
+    float l = left_raw;
+    float y_l = hp_coeff * (hp_prev_out_l + left_raw - hp_prev_in_l);
+    hp_prev_in_l = l;
+    hp_prev_out_l = y_l;
+    left_raw = y_l;
+    float r = right_raw;
+    float y_r = hp_coeff * (hp_prev_out_r + right_raw - hp_prev_in_r);
+    hp_prev_in_r = r;
+    hp_prev_out_r = y_r;
+    right_raw = y_r;
+
+    int32_t left_scaled = soft_clip(apply_gain(left_raw));
+    int32_t right_scaled = soft_clip(apply_gain(right_raw));
+
+    *left = clamp16(left_scaled);
+    *right = clamp16(right_scaled);
 }
 
 void sid_engine_queue_event(uint8_t chip_mask, uint8_t addr, uint8_t value, uint32_t delta_cycles) {
@@ -381,6 +443,28 @@ bool sid_engine_is_6581(void) {
     return g_channel_model[0] == MOS6581 && g_channel_model[1] == MOS6581;
 }
 
+void sid_engine_set_split_channels(bool split) {
+    g_split_channels = split;
+}
+
+bool sid_engine_get_split_channels(void) {
+    return g_split_channels;
+}
+
+static float clamp_master_volume(float level) {
+    if (level < 0.05f) return 0.05f;
+    if (level > 4.0f) return 4.0f;
+    return level;
+}
+
+void sid_engine_set_master_volume(float level) {
+    g_master_volume = clamp_master_volume(level);
+}
+
+float sid_engine_get_master_volume(void) {
+    return g_master_volume;
+}
+
 void sid_engine_get_monitor(sid_engine_monitor_t *out) {
     if (!out) {
         return;
@@ -418,12 +502,10 @@ void sid_engine_get_monitor(sid_engine_monitor_t *out) {
 }
 
 uint32_t sid_engine_get_queue_depth(void) {
-    size_t head = g_event_head;
-    size_t tail = g_event_tail;
-    if (tail >= head) {
-        return static_cast<uint32_t>(tail - head);
-    }
-    return static_cast<uint32_t>(kEventQueueSize - head + tail);
+    uint32_t save = save_and_disable_interrupts();
+    uint32_t depth = queue_depth_unsafe();
+    restore_interrupts(save);
+    return depth;
 }
 
 uint32_t sid_engine_get_dropped_event_count(void) {
@@ -436,4 +518,39 @@ void sid_engine_reset_queue_state(void) {
     g_cycles_to_next_event = UINT32_MAX;
     g_event_drop_count = 0;
     g_cycle_residual = 0.0;
+}
+
+size_t sid_engine_peek_queue(sid_engine_queue_entry_t *out, size_t max_entries, uint32_t *cycles_to_next) {
+    uint32_t save = save_and_disable_interrupts();
+    size_t copied = 0;
+    if (out && max_entries) {
+        size_t idx = g_event_head;
+        while (idx != g_event_tail && copied < max_entries) {
+            const TimedEvent &src = g_event_queue[idx];
+            out[copied].chip_mask = src.chip_mask;
+            out[copied].addr = src.addr;
+            out[copied].value = src.value;
+            out[copied].delta = src.delta;
+            copied++;
+            idx = advance_index(idx);
+        }
+    }
+    uint32_t next_cycles = g_cycles_to_next_event;
+    restore_interrupts(save);
+    if (cycles_to_next) {
+        *cycles_to_next = (next_cycles == UINT32_MAX) ? 0u : next_cycles;
+    }
+    return copied;
+}
+
+void sid_engine_get_queue_stats(sid_engine_queue_stats_t *stats) {
+    if (!stats) {
+        return;
+    }
+    uint32_t save = save_and_disable_interrupts();
+    stats->depth = queue_depth_unsafe();
+    stats->capacity = static_cast<uint32_t>(kEventQueueSize);
+    stats->dropped = g_event_drop_count;
+    stats->cycles_to_next = (g_cycles_to_next_event == UINT32_MAX) ? 0u : g_cycles_to_next_event;
+    restore_interrupts(save);
 }
