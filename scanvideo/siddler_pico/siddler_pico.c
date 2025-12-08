@@ -26,45 +26,21 @@
 #define TEXT_COLS 40
 #define TEXT_ROWS 27
 
-#define EVENT_QUEUE_CAP   512u
-#define FLOW_HIGH_WATER   448u   // CAP - 64
-#define FLOW_LOW_WATER    128u
-#define RECENT_BUF_SIZE   256u
+
+
+
+
+
+#define EVENT_QUEUE_CAP 4096
+#define FLOW_HIGH_WATER (EVENT_QUEUE_CAP - 128)
+#define FLOW_LOW_WATER 256u
+#define RECENT_BUF_SIZE 512u
 
 #define SID_CLOCK_HZ 985248u
 #define CLOCK_SCALE_BASE 1000000u
 #define CLOCK_SCALE_MIN 200000u   /* 0.20x */
 #define CLOCK_SCALE_MAX 3000000u  /* 3.00x */
 #define SID_DELAY_ADDR 0xFFu
-
-// ---- Live voice mute mask ----
-// bit 0 = voice 1, bit 1 = voice 2, bit 2 = voice 3
-static volatile uint8_t g_voice_mute_mask = 0x00;
-
-// Simple control protocol: 0xFE, <mask> (sent only at 4-byte event boundaries)
-#define CMD_SET_MUTE_MASK 0xFE
-static uint8_t g_control_state = 0;  // 0 = idle, 1 = expecting mute mask
-
-// Map SID register to voice index
-static inline int sid_voice_from_addr(uint8_t reg)
-{
-    // Use lower 5 bits (what we pass to siddler_audio_queue_event)
-    uint8_t r = reg & 0x1Fu;
-
-    // Standard SID layout:
-    // Voice 1: $00–$06, Voice 2: $07–$0D, Voice 3: $0E–$14
-    if (r <= 0x06u)                return 0; // V1
-    if (r >= 0x07u && r <= 0x0Du)  return 1; // V2
-    if (r >= 0x0Eu && r <= 0x14u)  return 2; // V3
-    return -1; // global / not a voice register
-}
-
-static inline bool sid_is_muted(uint8_t reg)
-{
-    int v = sid_voice_from_addr(reg);
-    if (v < 0) return false; // never mute global regs
-    return (g_voice_mute_mask & (1u << v)) != 0;
-}
 
 #ifndef COUNT_OF
 #define COUNT_OF(x) (sizeof(x) / sizeof((x)[0]))
@@ -811,11 +787,7 @@ static void process_console(void)
     }
 }
 
-/* BOUNDED USB READ: avoid hogging CPU when a lot of data is queued
- *
- * Now also intercepts the live control command:
- *   0xFE, <mask>   (when at an event boundary)
- */
+/* BOUNDED USB READ: avoid hogging CPU when a lot of data is queued */
 static void process_serial(void)
 {
     // If flow is paused, don't pull more from USB.
@@ -833,26 +805,7 @@ static void process_serial(void)
             break;
         }
         g_loader.total_bytes += count;
-
-        for (uint32_t i = 0; i < count; ++i) {
-            uint8_t b = buf[i];
-
-            // Control protocol: 0xFE, <mask>, only when we're at an event boundary
-            if (g_control_state == 0 && g_loader.have == 0 && b == CMD_SET_MUTE_MASK) {
-                g_control_state = 1; // next byte will be the mask
-                continue;
-            }
-            if (g_control_state == 1) {
-                // This byte is the mute mask
-                g_voice_mute_mask = b;
-                g_control_state = 0;
-                continue;
-            }
-
-            // Normal data byte -> feed into the 4-byte SID event decoder
-            dump_loader_feed(&g_loader, &b, 1);
-        }
-
+        dump_loader_feed(&g_loader, buf, count);
         chunks++;
         // dump_loader_feed() may change queue depth and thus flow state
         // via flow_control_consider(), so loop condition checks g_flow_paused.
@@ -884,23 +837,13 @@ static void dump_queue_service(void)
         if (!dump_queue_pop(&g_queue, &ev)) {
             break;
         }
-
         uint32_t scaled_delta = scale_delta_cycles(ev.delta);
-
-        if (ev.addr == SID_DELAY_ADDR) {
-            // Pure delay from the host
-            siddler_audio_queue_event(0, 0, 0, scaled_delta);
+        uint8_t chip_mask = sid_mode_chip_mask();
+        if (ev.addr != SID_DELAY_ADDR) {
+            siddler_audio_queue_event(chip_mask, ev.addr & 0x1F, ev.value, scaled_delta);
         } else {
-            // Normal SID register write – maybe muted?
-            if (sid_is_muted(ev.addr)) {
-                // Voice is muted: keep time, but don't actually write
-                siddler_audio_queue_event(0, 0, 0, scaled_delta);
-            } else {
-                uint8_t chip_mask = sid_mode_chip_mask();
-                siddler_audio_queue_event(chip_mask, ev.addr & 0x1F, ev.value, scaled_delta);
-            }
+            siddler_audio_queue_event(0, 0, 0, scaled_delta);
         }
-
         flow_control_consider();
     }
 }
